@@ -280,18 +280,18 @@
             color: #666;
         }
 
-        .timeout-notice {
-            background: #fff3cd;
-            border: 1px solid #ffeaa7;
-            color: #856404;
+        .database-info {
+            background: #e7f3ff;
+            border: 1px solid #bee5eb;
+            color: #0c5460;
             padding: 15px;
             border-radius: 8px;
             margin-bottom: 15px;
         }
 
-        .timeout-notice h4 {
+        .database-info h4 {
             margin-bottom: 10px;
-            color: #856404;
+            color: #0c5460;
         }
     </style>
 </head>
@@ -319,9 +319,9 @@
 
             <div class="card">
                 <h2>🎯 Bot Controls</h2>
-                <div class="timeout-notice">
-                    <h4>⚠️ Improved Error Handling</h4>
-                    <p>The bot now includes enhanced timeout handling, retry logic, and alternative navigation methods to handle slow-loading reservation sites.</p>
+                <div class="database-info">
+                    <h4>📊 JSON Database Active</h4>
+                    <p>Now using simple JSON file storage for better compatibility. All data persists between sessions.</p>
                 </div>
                 <div class="form-group">
                     <p><strong>Status:</strong> 
@@ -356,7 +356,7 @@
                     <p><strong>Message:</strong> <span id="current-message">Waiting for activation</span></p>
                 </div>
                 <div class="log" id="activity-log">
-                    <div class="log-entry">Bot initialized. Enhanced timeout and retry handling active...</div>
+                    <div class="log-entry">Bot initialized. JSON database loaded successfully...</div>
                 </div>
             </div>
 

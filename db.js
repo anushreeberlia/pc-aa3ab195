@@ -1,79 +1,118 @@
-const Database = require('better-sqlite3');
+const fs = require('fs');
 const path = require('path');
 
-// Initialize database
-const db = new Database('./data.db');
+const DB_FILE = path.join(__dirname, 'data.json');
 
-// Enable WAL mode for better concurrency
-db.pragma('journal_mode = WAL');
+// Initialize database file if it doesn't exist
+function initDB() {
+  if (!fs.existsSync(DB_FILE)) {
+    const initialData = {
+      users: [],
+      bot_config: [{ id: 1, is_active: false, created_at: new Date().toISOString() }],
+      activity_logs: [],
+      reservations: []
+    };
+    fs.writeFileSync(DB_FILE, JSON.stringify(initialData, null, 2));
+  }
+}
 
-// Create tables
-db.exec(`
-  CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    username TEXT NOT NULL,
-    password TEXT NOT NULL,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  );
+// Read data from JSON file
+function readData() {
+  try {
+    if (!fs.existsSync(DB_FILE)) {
+      initDB();
+    }
+    const data = fs.readFileSync(DB_FILE, 'utf8');
+    return JSON.parse(data);
+  } catch (error) {
+    console.error('Error reading database:', error);
+    initDB();
+    return readData();
+  }
+}
 
-  CREATE TABLE IF NOT EXISTS bot_config (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    is_active BOOLEAN DEFAULT 0,
-    schedule_pattern TEXT DEFAULT '*/15 6-22 * * *',
-    target_court TEXT DEFAULT 'Alice Marble Tennis Court',
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  );
+// Write data to JSON file
+function writeData(data) {
+  try {
+    fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
+    return true;
+  } catch (error) {
+    console.error('Error writing database:', error);
+    return false;
+  }
+}
 
-  CREATE TABLE IF NOT EXISTS activity_logs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    message TEXT NOT NULL,
-    log_type TEXT DEFAULT 'info',
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  );
+// Helper functions
+function getAll(collection) {
+  const data = readData();
+  return data[collection] || [];
+}
 
-  CREATE TABLE IF NOT EXISTS reservations (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    court_name TEXT NOT NULL,
-    reservation_date TEXT NOT NULL,
-    reservation_time TEXT,
-    status TEXT DEFAULT 'booked',
-    booking_details TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  );
+function getById(collection, id) {
+  const items = getAll(collection);
+  return items.find(item => item.id === id);
+}
 
-  -- Insert default bot config if none exists
-  INSERT OR IGNORE INTO bot_config (id, is_active) VALUES (1, 0);
-`);
-
-// Prepared statements
-const statements = {
-  // User operations
-  saveUser: db.prepare('INSERT OR REPLACE INTO users (id, username, password, updated_at) VALUES (1, ?, ?, CURRENT_TIMESTAMP)'),
-  getUser: db.prepare('SELECT * FROM users WHERE id = 1'),
+function insert(collection, item) {
+  const data = readData();
+  if (!data[collection]) {
+    data[collection] = [];
+  }
   
-  // Bot config operations
-  updateBotConfig: db.prepare('UPDATE bot_config SET is_active = ?, updated_at = CURRENT_TIMESTAMP WHERE id = 1'),
-  getBotConfig: db.prepare('SELECT * FROM bot_config WHERE id = 1'),
+  // Generate ID if not provided
+  if (!item.id) {
+    const maxId = data[collection].reduce((max, item) => Math.max(max, item.id || 0), 0);
+    item.id = maxId + 1;
+  }
   
-  // Activity log operations
-  addLog: db.prepare('INSERT INTO activity_logs (message, log_type) VALUES (?, ?)'),
-  getLogs: db.prepare('SELECT * FROM activity_logs ORDER BY created_at DESC LIMIT ?'),
-  clearOldLogs: db.prepare('DELETE FROM activity_logs WHERE created_at < datetime("now", "-7 days")'),
+  // Add timestamp
+  item.created_at = new Date().toISOString();
   
-  // Reservation operations
-  addReservation: db.prepare('INSERT INTO reservations (court_name, reservation_date, reservation_time, status, booking_details) VALUES (?, ?, ?, ?, ?)'),
-  getReservations: db.prepare('SELECT * FROM reservations ORDER BY created_at DESC LIMIT ?'),
-  updateReservationStatus: db.prepare('UPDATE reservations SET status = ? WHERE id = ?')
-};
+  data[collection].push(item);
+  writeData(data);
+  return item.id;
+}
 
-// Database operations
+function update(collection, id, newData) {
+  const data = readData();
+  const items = data[collection] || [];
+  const index = items.findIndex(item => item.id === id);
+  
+  if (index !== -1) {
+    items[index] = { ...items[index], ...newData, updated_at: new Date().toISOString() };
+    writeData(data);
+    return true;
+  }
+  return false;
+}
+
+function remove(collection, id) {
+  const data = readData();
+  const items = data[collection] || [];
+  const newItems = items.filter(item => item.id !== id);
+  
+  if (newItems.length !== items.length) {
+    data[collection] = newItems;
+    writeData(data);
+    return true;
+  }
+  return false;
+}
+
+// Database operations specific to the tennis bot
 const dbOps = {
   // User operations
   saveCredentials(username, password) {
     try {
-      statements.saveUser.run(username, password);
+      const data = readData();
+      const existingUser = data.users.find(u => u.id === 1);
+      
+      if (existingUser) {
+        update('users', 1, { username, password });
+      } else {
+        insert('users', { id: 1, username, password });
+      }
+      
       this.addLog(`Credentials updated for user: ${username}`, 'info');
       return true;
     } catch (error) {
@@ -84,7 +123,7 @@ const dbOps = {
   
   getCredentials() {
     try {
-      const user = statements.getUser.get();
+      const user = getById('users', 1);
       return user ? { username: user.username, password: user.password } : null;
     } catch (error) {
       this.addLog(`Error retrieving credentials: ${error.message}`, 'error');
@@ -95,7 +134,7 @@ const dbOps = {
   // Bot config operations
   setBotActive(isActive) {
     try {
-      statements.updateBotConfig.run(isActive ? 1 : 0);
+      update('bot_config', 1, { is_active: isActive });
       this.addLog(`Bot ${isActive ? 'activated' : 'deactivated'}`, 'info');
       return true;
     } catch (error) {
@@ -106,7 +145,7 @@ const dbOps = {
   
   getBotConfig() {
     try {
-      return statements.getBotConfig.get();
+      return getById('bot_config', 1);
     } catch (error) {
       this.addLog(`Error retrieving bot config: ${error.message}`, 'error');
       return null;
@@ -116,10 +155,16 @@ const dbOps = {
   // Activity log operations
   addLog(message, type = 'info') {
     try {
-      statements.addLog.run(message, type);
-      // Clean up old logs periodically
-      if (Math.random() < 0.01) { // 1% chance to clean up old logs
-        statements.clearOldLogs.run();
+      insert('activity_logs', { message, log_type: type });
+      
+      // Clean up old logs (keep only last 100)
+      if (Math.random() < 0.1) { // 10% chance to clean up
+        const logs = getAll('activity_logs');
+        if (logs.length > 100) {
+          const data = readData();
+          data.activity_logs = logs.slice(-100); // Keep last 100
+          writeData(data);
+        }
       }
     } catch (error) {
       console.error('Error adding log:', error);
@@ -128,7 +173,8 @@ const dbOps = {
   
   getLogs(limit = 50) {
     try {
-      return statements.getLogs.all(limit);
+      const logs = getAll('activity_logs');
+      return logs.slice(-limit); // Get last N logs
     } catch (error) {
       console.error('Error retrieving logs:', error);
       return [];
@@ -138,9 +184,16 @@ const dbOps = {
   // Reservation operations
   addReservation(courtName, date, time, status = 'booked', details = null) {
     try {
-      const result = statements.addReservation.run(courtName, date, time, status, details);
+      const id = insert('reservations', {
+        court_name: courtName,
+        reservation_date: date,
+        reservation_time: time,
+        status: status,
+        booking_details: details
+      });
+      
       this.addLog(`Reservation added: ${courtName} on ${date} at ${time}`, 'success');
-      return result.lastInsertRowid;
+      return id;
     } catch (error) {
       this.addLog(`Error adding reservation: ${error.message}`, 'error');
       return null;
@@ -149,7 +202,8 @@ const dbOps = {
   
   getReservations(limit = 20) {
     try {
-      return statements.getReservations.all(limit);
+      const reservations = getAll('reservations');
+      return reservations.slice(-limit).reverse(); // Get last N, most recent first
     } catch (error) {
       this.addLog(`Error retrieving reservations: ${error.message}`, 'error');
       return [];
@@ -158,9 +212,11 @@ const dbOps = {
   
   updateReservationStatus(id, status) {
     try {
-      statements.updateReservationStatus.run(status, id);
-      this.addLog(`Reservation ${id} status updated to: ${status}`, 'info');
-      return true;
+      const success = update('reservations', id, { status });
+      if (success) {
+        this.addLog(`Reservation ${id} status updated to: ${status}`, 'info');
+      }
+      return success;
     } catch (error) {
       this.addLog(`Error updating reservation status: ${error.message}`, 'error');
       return false;
@@ -168,11 +224,7 @@ const dbOps = {
   }
 };
 
-// Graceful shutdown
-process.on('SIGINT', () => {
-  console.log('Closing database connection...');
-  db.close();
-  process.exit(0);
-});
+// Initialize database on module load
+initDB();
 
-module.exports = { db, dbOps };
+module.exports = { getAll, getById, insert, update, remove, dbOps };

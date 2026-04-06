@@ -147,7 +147,7 @@ async function bookTennisCourt(retryCount = 0) {
       try {
         if (selector.includes(':contains')) {
           // Use XPath for text content searches
-          const textSearch = selector.split(':contains("')[1].replace('")', '');
+          const textSearch = selector.split(':contains("')[1].replace('")','');
           const elements = await page.$x(`//a[contains(text(), '${textSearch}') or contains(@title, '${textSearch}')]`);
           if (elements.length > 0) {
             reservationLink = elements[0];
@@ -279,7 +279,7 @@ async function bookTennisCourt(retryCount = 0) {
         let loginButton = null;
         for (const selector of loginButtonSelectors) {
           if (selector.includes(':contains')) {
-            const textSearch = selector.split(':contains("')[1].replace('")', '');
+            const textSearch = selector.split(':contains("')[1].replace('")','');
             const buttons = await page.$x(`//button[contains(text(), '${textSearch}')]`);
             if (buttons.length > 0) {
               loginButton = buttons[0];
@@ -393,7 +393,7 @@ async function bookTennisCourt(retryCount = 0) {
           let confirmButton = null;
           for (const selector of confirmationSelectors) {
             if (selector.includes(':contains')) {
-              const textSearch = selector.split(':contains("')[1].replace('")', '');
+              const textSearch = selector.split(':contains("')[1].replace('")','');
               const buttons = await page.$x(`//button[contains(text(), '${textSearch}')] | //input[contains(@value, '${textSearch}')]`);
               if (buttons.length > 0) {
                 confirmButton = buttons[0];
