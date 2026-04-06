@@ -249,6 +249,12 @@
             border: 1px solid #f5c6cb;
         }
 
+        .alert-warning {
+            background: #fff3cd;
+            color: #856404;
+            border: 1px solid #ffeaa7;
+        }
+
         .stats {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
@@ -272,6 +278,20 @@
         .stat-label {
             font-size: 0.9rem;
             color: #666;
+        }
+
+        .timeout-notice {
+            background: #fff3cd;
+            border: 1px solid #ffeaa7;
+            color: #856404;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 15px;
+        }
+
+        .timeout-notice h4 {
+            margin-bottom: 10px;
+            color: #856404;
         }
     </style>
 </head>
@@ -299,6 +319,10 @@
 
             <div class="card">
                 <h2>🎯 Bot Controls</h2>
+                <div class="timeout-notice">
+                    <h4>⚠️ Improved Error Handling</h4>
+                    <p>The bot now includes enhanced timeout handling, retry logic, and alternative navigation methods to handle slow-loading reservation sites.</p>
+                </div>
                 <div class="form-group">
                     <p><strong>Status:</strong> 
                         <span class="status-indicator" id="status-indicator"></span>
@@ -321,6 +345,10 @@
                         <div class="stat-number" id="bot-uptime">0h</div>
                         <div class="stat-label">Bot Uptime</div>
                     </div>
+                    <div class="stat-item">
+                        <div class="stat-number" id="retry-count">0</div>
+                        <div class="stat-label">Retry Attempts</div>
+                    </div>
                 </div>
                 <div id="status-info">
                     <p><strong>Last Check:</strong> <span id="last-check">Never</span></p>
@@ -328,7 +356,7 @@
                     <p><strong>Message:</strong> <span id="current-message">Waiting for activation</span></p>
                 </div>
                 <div class="log" id="activity-log">
-                    <div class="log-entry">Bot initialized. Waiting for credentials...</div>
+                    <div class="log-entry">Bot initialized. Enhanced timeout and retry handling active...</div>
                 </div>
             </div>
 
@@ -345,6 +373,7 @@
         let ws;
         let logContainer;
         let botStartTime = null;
+        let retryCount = 0;
         const wsPort = parseInt(window.location.port || 80) + 1;
         
         function initWebSocket() {
@@ -355,6 +384,12 @@
                 if (data.type === 'status') {
                     updateStatus(data.data);
                     addLogEntry(data.data.message);
+                    
+                    // Track retries
+                    if (data.data.message.includes('Retry') || data.data.message.includes('Attempt')) {
+                        retryCount++;
+                        document.getElementById('retry-count').textContent = retryCount;
+                    }
                 }
             };
             
@@ -431,9 +466,9 @@
             entry.className = 'log-entry new';
             
             // Add type-based styling
-            if (message.toLowerCase().includes('error')) {
+            if (message.toLowerCase().includes('error') || message.toLowerCase().includes('failed')) {
                 entry.classList.add('error');
-            } else if (message.toLowerCase().includes('success')) {
+            } else if (message.toLowerCase().includes('success') || message.toLowerCase().includes('booked')) {
                 entry.classList.add('success');
             }
             
@@ -530,7 +565,7 @@
                 const result = await response.json();
                 
                 if (response.ok) {
-                    showAlert('Test booking started - check activity log for results!');
+                    showAlert('Test booking started - check activity log for results!', 'warning');
                 } else {
                     showAlert(result.error || 'Failed to start test booking', 'error');
                 }
