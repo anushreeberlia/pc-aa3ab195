@@ -3,6 +3,7 @@ const puppeteer = require('puppeteer');
 const cron = require('node-cron');
 const WebSocket = require('ws');
 const path = require('path');
+const { dbOps } = require('./db');
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -11,8 +12,7 @@ const wsPort = process.env.WS_PORT || (parseInt(port) + 1);
 app.use(express.json());
 app.use(express.static('public'));
 
-// Store user credentials and bot status
-let userCredentials = null;
+// Bot status (in-memory for real-time updates, persisted in DB)
 let botStatus = {
   isActive: false,
   lastCheck: null,
@@ -37,12 +37,19 @@ function updateStatus(message, data = {}) {
   botStatus.message = message;
   botStatus.lastCheck = new Date().toISOString();
   Object.assign(botStatus, data);
+  
+  // Log to database
+  const logType = message.toLowerCase().includes('error') ? 'error' : 
+                 message.toLowerCase().includes('success') ? 'success' : 'info';
+  dbOps.addLog(message, logType);
+  
   broadcastStatus();
   console.log(`[${new Date().toISOString()}] ${message}`);
 }
 
 // Tennis court booking logic
 async function bookTennisCourt() {
+  const userCredentials = dbOps.getCredentials();
   if (!userCredentials) {
     updateStatus('No credentials provided');
     return;
@@ -146,13 +153,29 @@ async function bookTennisCourt() {
         const confirmButtons = await page.$x("//button[contains(text(), 'Confirm') or contains(text(), 'Book') or contains(text(), 'Reserve')]");
         if (confirmButtons.length > 0) {
           await confirmButtons[0].click();
-          updateStatus('Successfully booked tennis court!', {
-            reservations: [...botStatus.reservations, {
-              court: 'Alice Marble Tennis Court',
-              time: new Date().toISOString(),
-              status: 'Booked'
-            }]
-          });
+          
+          // Add reservation to database
+          const reservationDate = new Date().toISOString().split('T')[0];
+          const reservationTime = new Date().toLocaleTimeString();
+          const reservationId = dbOps.addReservation(
+            'Alice Marble Tennis Court',
+            reservationDate,
+            reservationTime,
+            'booked',
+            JSON.stringify(firstSlot)
+          );
+          
+          // Update status with new reservations list
+          const reservations = dbOps.getReservations(10).map(res => ({
+            id: res.id,
+            court: res.court_name,
+            date: res.reservation_date,
+            time: res.reservation_time,
+            status: res.status,
+            created: res.created_at
+          }));
+          
+          updateStatus('Successfully booked tennis court!', { reservations });
         } else {
           updateStatus('Found available slot but could not complete booking');
         }
@@ -188,6 +211,10 @@ function startBot() {
   
   botStatus.isActive = true;
   botStatus.nextCheck = 'Every 15 minutes (6 AM - 10 PM)';
+  
+  // Update database
+  dbOps.setBotActive(true);
+  
   updateStatus('Bot started and monitoring for tennis court availability');
 }
 
@@ -199,7 +226,35 @@ function stopBot() {
   
   botStatus.isActive = false;
   botStatus.nextCheck = null;
+  
+  // Update database
+  dbOps.setBotActive(false);
+  
   updateStatus('Bot stopped');
+}
+
+// Load initial data from database
+function loadInitialData() {
+  const config = dbOps.getBotConfig();
+  if (config) {
+    botStatus.isActive = Boolean(config.is_active);
+    if (botStatus.isActive) {
+      startBot(); // Restart bot if it was active
+    }
+  }
+  
+  // Load recent reservations
+  const reservations = dbOps.getReservations(10).map(res => ({
+    id: res.id,
+    court: res.court_name,
+    date: res.reservation_date,
+    time: res.reservation_time,
+    status: res.status,
+    created: res.created_at
+  }));
+  
+  botStatus.reservations = reservations;
+  updateStatus('Server started, data loaded from database');
 }
 
 // API Routes
@@ -214,13 +269,18 @@ app.post('/api/credentials', (req, res) => {
     return res.status(400).json({ error: 'Username and password are required' });
   }
   
-  userCredentials = { username, password };
-  updateStatus('Credentials updated successfully');
-  res.json({ message: 'Credentials saved successfully' });
+  const success = dbOps.saveCredentials(username, password);
+  if (success) {
+    updateStatus('Credentials updated successfully');
+    res.json({ message: 'Credentials saved successfully' });
+  } else {
+    res.status(500).json({ error: 'Failed to save credentials' });
+  }
 });
 
 app.post('/api/start', (req, res) => {
-  if (!userCredentials) {
+  const credentials = dbOps.getCredentials();
+  if (!credentials) {
     return res.status(400).json({ error: 'Please set credentials first' });
   }
   
@@ -234,11 +294,41 @@ app.post('/api/stop', (req, res) => {
 });
 
 app.get('/api/status', (req, res) => {
-  res.json(botStatus);
+  // Include recent logs
+  const logs = dbOps.getLogs(20);
+  res.json({
+    ...botStatus,
+    logs: logs.map(log => ({
+      message: log.message,
+      type: log.log_type,
+      timestamp: log.created_at
+    }))
+  });
+});
+
+app.get('/api/reservations', (req, res) => {
+  const reservations = dbOps.getReservations(50).map(res => ({
+    id: res.id,
+    court: res.court_name,
+    date: res.reservation_date,
+    time: res.reservation_time,
+    status: res.status,
+    created: res.created_at,
+    details: res.booking_details
+  }));
+  
+  res.json({ reservations });
+});
+
+app.get('/api/logs', (req, res) => {
+  const limit = parseInt(req.query.limit) || 50;
+  const logs = dbOps.getLogs(limit);
+  res.json({ logs });
 });
 
 app.post('/api/test-booking', async (req, res) => {
-  if (!userCredentials) {
+  const credentials = dbOps.getCredentials();
+  if (!credentials) {
     return res.status(400).json({ error: 'Please set credentials first' });
   }
   
@@ -250,5 +340,7 @@ app.post('/api/test-booking', async (req, res) => {
 app.listen(port, () => {
   console.log(`SF Tennis Bot server running on port ${port}`);
   console.log(`WebSocket server running on port ${wsPort}`);
-  updateStatus('Server started, waiting for credentials and activation');
+  
+  // Load initial data from database
+  loadInitialData();
 });

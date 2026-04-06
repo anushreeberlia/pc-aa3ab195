@@ -118,6 +118,12 @@
             transform: translateY(0);
         }
 
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
         .btn.btn-danger {
             background: linear-gradient(45deg, #ff6b6b, #ee5a52);
         }
@@ -171,8 +177,15 @@
             color: #666;
         }
 
-        .log-entry.new {
+        .log-entry.error {
+            color: #dc3545;
+        }
+
+        .log-entry.success {
             color: #28a745;
+        }
+
+        .log-entry.new {
             animation: highlight 3s ease-out;
         }
 
@@ -204,6 +217,12 @@
             margin: 3px 0;
         }
 
+        .reservation-meta {
+            font-size: 12px;
+            color: #999;
+            margin-top: 8px;
+        }
+
         .no-reservations {
             text-align: center;
             color: #999;
@@ -228,6 +247,31 @@
             background: #f8d7da;
             color: #721c24;
             border: 1px solid #f5c6cb;
+        }
+
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+            margin-bottom: 15px;
+        }
+
+        .stat-item {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
+            text-align: center;
+        }
+
+        .stat-number {
+            font-size: 2rem;
+            font-weight: bold;
+            color: #667eea;
+        }
+
+        .stat-label {
+            font-size: 0.9rem;
+            color: #666;
         }
     </style>
 </head>
@@ -267,7 +311,17 @@
             </div>
 
             <div class="card status">
-                <h2>📊 Status & Activity Log</h2>
+                <h2>📊 Status & Activity</h2>
+                <div class="stats">
+                    <div class="stat-item">
+                        <div class="stat-number" id="total-reservations">0</div>
+                        <div class="stat-label">Total Reservations</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-number" id="bot-uptime">0h</div>
+                        <div class="stat-label">Bot Uptime</div>
+                    </div>
+                </div>
                 <div id="status-info">
                     <p><strong>Last Check:</strong> <span id="last-check">Never</span></p>
                     <p><strong>Next Check:</strong> <span id="next-check">Not scheduled</span></p>
@@ -279,7 +333,7 @@
             </div>
 
             <div class="card reservations">
-                <h2>🏆 Reservations Made</h2>
+                <h2>🏆 Recent Reservations</h2>
                 <div id="reservations-list">
                     <div class="no-reservations">No reservations yet. Start the bot to begin monitoring!</div>
                 </div>
@@ -290,6 +344,7 @@
     <script>
         let ws;
         let logContainer;
+        let botStartTime = null;
         const wsPort = parseInt(window.location.port || 80) + 1;
         
         function initWebSocket() {
@@ -322,11 +377,13 @@
                 botStatus.textContent = 'Active';
                 startBtn.disabled = true;
                 stopBtn.disabled = false;
+                if (!botStartTime) botStartTime = new Date();
             } else {
                 statusIndicator.className = 'status-indicator status-inactive';
                 botStatus.textContent = 'Inactive';
                 startBtn.disabled = false;
                 stopBtn.disabled = true;
+                botStartTime = null;
             }
             
             lastCheck.textContent = status.lastCheck ? new Date(status.lastCheck).toLocaleString() : 'Never';
@@ -334,6 +391,18 @@
             currentMessage.textContent = status.message;
             
             updateReservations(status.reservations || []);
+            updateStats(status.reservations || []);
+        }
+        
+        function updateStats(reservations) {
+            document.getElementById('total-reservations').textContent = reservations.length;
+            
+            if (botStartTime) {
+                const uptime = Math.floor((new Date() - botStartTime) / (1000 * 60 * 60));
+                document.getElementById('bot-uptime').textContent = `${uptime}h`;
+            } else {
+                document.getElementById('bot-uptime').textContent = '0h';
+            }
         }
         
         function updateReservations(reservations) {
@@ -347,8 +416,10 @@
             container.innerHTML = reservations.map(res => `
                 <div class="reservation-item">
                     <h4>${res.court}</h4>
-                    <p><strong>Time:</strong> ${new Date(res.time).toLocaleString()}</p>
-                    <p><strong>Status:</strong> ${res.status}</p>
+                    <p><strong>Date:</strong> ${res.date}</p>
+                    <p><strong>Time:</strong> ${res.time}</p>
+                    <p><strong>Status:</strong> <span style="color: ${res.status === 'booked' ? '#28a745' : '#dc3545'}">${res.status}</span></p>
+                    <div class="reservation-meta">Created: ${new Date(res.created).toLocaleString()}</div>
                 </div>
             `).join('');
         }
@@ -358,6 +429,14 @@
             
             const entry = document.createElement('div');
             entry.className = 'log-entry new';
+            
+            // Add type-based styling
+            if (message.toLowerCase().includes('error')) {
+                entry.classList.add('error');
+            } else if (message.toLowerCase().includes('success')) {
+                entry.classList.add('success');
+            }
+            
             entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
             
             logContainer.appendChild(entry);
@@ -365,6 +444,11 @@
             
             // Remove animation class after animation completes
             setTimeout(() => entry.classList.remove('new'), 3000);
+            
+            // Keep only last 100 log entries
+            if (logContainer.children.length > 100) {
+                logContainer.removeChild(logContainer.firstChild);
+            }
         }
         
         function showAlert(message, type = 'success') {
@@ -455,6 +539,28 @@
             }
         }
         
+        // Load logs from database
+        async function loadLogs() {
+            try {
+                const response = await fetch('/api/logs?limit=20');
+                const data = await response.json();
+                
+                if (response.ok && data.logs) {
+                    logContainer.innerHTML = '';
+                    data.logs.reverse().forEach(log => {
+                        const entry = document.createElement('div');
+                        entry.className = `log-entry ${log.type}`;
+                        const timestamp = new Date(log.timestamp).toLocaleTimeString();
+                        entry.textContent = `[${timestamp}] ${log.message}`;
+                        logContainer.appendChild(entry);
+                    });
+                    logContainer.scrollTop = logContainer.scrollHeight;
+                }
+            } catch (error) {
+                console.error('Failed to load logs:', error);
+            }
+        }
+        
         // Initialize on page load
         document.addEventListener('DOMContentLoaded', function() {
             logContainer = document.getElementById('activity-log');
@@ -463,8 +569,30 @@
             // Load initial status
             fetch('/api/status')
                 .then(response => response.json())
-                .then(status => updateStatus(status))
+                .then(status => {
+                    updateStatus(status);
+                    // Load historical logs if available
+                    if (status.logs) {
+                        logContainer.innerHTML = '';
+                        status.logs.reverse().forEach(log => {
+                            const entry = document.createElement('div');
+                            entry.className = `log-entry ${log.type}`;
+                            const timestamp = new Date(log.timestamp).toLocaleTimeString();
+                            entry.textContent = `[${timestamp}] ${log.message}`;
+                            logContainer.appendChild(entry);
+                        });
+                        logContainer.scrollTop = logContainer.scrollHeight;
+                    }
+                })
                 .catch(error => console.error('Failed to load initial status:', error));
+            
+            // Update uptime every minute
+            setInterval(() => {
+                if (botStartTime) {
+                    const uptime = Math.floor((new Date() - botStartTime) / (1000 * 60 * 60));
+                    document.getElementById('bot-uptime').textContent = `${uptime}h`;
+                }
+            }, 60000);
         });
     </script>
 </body>
