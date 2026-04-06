@@ -290,9 +290,10 @@
     <script>
         let ws;
         let logContainer;
+        const wsPort = parseInt(window.location.port || 80) + 1;
         
         function initWebSocket() {
-            ws = new WebSocket(`ws://${window.location.hostname}:8080`);
+            ws = new WebSocket(`ws://${window.location.hostname}:${wsPort}`);
             
             ws.onmessage = function(event) {
                 const data = JSON.parse(event.data);

@@ -6,6 +6,7 @@ const path = require('path');
 
 const app = express();
 const port = process.env.PORT || 3000;
+const wsPort = process.env.WS_PORT || (parseInt(port) + 1);
 
 app.use(express.json());
 app.use(express.static('public'));
@@ -21,7 +22,7 @@ let botStatus = {
 };
 
 // WebSocket server for real-time updates
-const wss = new WebSocket.Server({ port: 8080 });
+const wss = new WebSocket.Server({ port: wsPort });
 
 function broadcastStatus() {
   const statusMessage = JSON.stringify({ type: 'status', data: botStatus });
@@ -248,6 +249,6 @@ app.post('/api/test-booking', async (req, res) => {
 
 app.listen(port, () => {
   console.log(`SF Tennis Bot server running on port ${port}`);
-  console.log(`WebSocket server running on port 8080`);
+  console.log(`WebSocket server running on port ${wsPort}`);
   updateStatus('Server started, waiting for credentials and activation');
 });
